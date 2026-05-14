@@ -54,7 +54,7 @@ function interpolateColorArrays(colA: string[], colB: string[], t: number) {
 // ── Component ───────────────────────────────────────────────────────
 
 export default function OilBrushCanvas() {
-  const [brushSize, setBrushSize] = useState(20);
+  const [brushSize, setBrushSize] = useState(50);
   const [backgroundColor, setBackgroundColor] = useState("#ffffff");
   const [brushColors, setBrushColors] = useState({
     start: "#008bf5",
@@ -73,9 +73,9 @@ export default function OilBrushCanvas() {
 
   // Tunable params
   const [readEvery, setReadEvery] = useState(50);
-  const [mixStrength, setMixStrength] = useState(0.08);
+  const [mixStrength, setMixStrength] = useState(0.02);
   const [chainJoints, setChainJoints] = useState(2);
-  const [pointStep, setPointStep] = useState(20);
+  const [pointStep, setPointStep] = useState(2);
   const [duration] = useState(5 * 60 * 1000);
 
   // Animation params
@@ -253,13 +253,10 @@ export default function OilBrushCanvas() {
       }
     }
 
-    const baseColors =
-      allFrameColors.length > 0
-        ? allFrameColors[0]
-        : computeColors(
-            allFramePaths[0].length,
-            validKeyframes[0].colors
-          );
+    const baseColors = computeColors(
+      allFramePaths[0].length,
+      validKeyframes[0].colors
+    );
     const maxBristles = Math.round(brushSize * 1.5);
 
     if (workerRef.current) workerRef.current.terminate();
@@ -269,79 +266,51 @@ export default function OilBrushCanvas() {
     );
     workerRef.current = worker;
 
-    const bitmaps: ImageBitmap[] = [];
-    let framesCompleted = 0;
-    const totalFrames = allFramePaths.length;
-
     worker.onmessage = (e) => {
       if (e.data.type === "progress") {
-        const frameProgress = e.data.value;
-        const overall =
-          (framesCompleted + frameProgress) / totalFrames;
-        setRenderProgress(overall);
+        setRenderProgress(e.data.value);
       } else if (e.data.type === "complete") {
-        bitmaps.push(e.data.bitmap);
-        framesCompleted++;
-
-        if (framesCompleted >= totalFrames) {
-          const elapsed = performance.now() - renderStartRef.current;
-          setRenderTime(elapsed);
-          setIsRendering(false);
-          setRenderProgress(1);
-          setHasResult(true);
-          setPreRenderedFrames(bitmaps);
-        } else {
-          // Render next frame
-          const frameColors =
-            allFrameColors.length > 0
-              ? allFrameColors[framesCompleted]
-              : baseColors;
-
-          worker.postMessage({
-            allFramePaths: [allFramePaths[framesCompleted]],
-            config: {
-              width: wWidth,
-              height: wHeight,
-              brushSize,
-              duration,
-              backgroundColor,
-              pathColors: frameColors,
-              simultaneous: false,
-              svgType: "strokes",
-              readEvery,
-              mixMode: "readpixels",
-              mixStrength,
-              maxBristles,
-              chainJoints,
-              pointStep,
-            },
-          });
-        }
+        // Single frame result
+        const elapsed = performance.now() - renderStartRef.current;
+        setRenderTime(elapsed);
+        setIsRendering(false);
+        setRenderProgress(1);
+        setHasResult(true);
+        setPreRenderedFrames([e.data.bitmap]);
+      } else if (e.data.type === "frames") {
+        // Multi-frame result
+        const elapsed = performance.now() - renderStartRef.current;
+        setRenderTime(elapsed);
+        setIsRendering(false);
+        setRenderProgress(1);
+        setHasResult(true);
+        setPreRenderedFrames(e.data.bitmaps);
       } else if (e.data.type === "error") {
         console.error("Worker error:", e.data.message);
         setIsRendering(false);
       }
     };
 
-    // Start first frame
+    // Send all frames to worker at once — matches original pattern
     worker.postMessage({
-      allFramePaths: [allFramePaths[0]],
+      allFramePaths,
+      allFrameColors: allFrameColors.length > 0 ? allFrameColors : null,
       config: {
         width: wWidth,
         height: wHeight,
         brushSize,
         duration,
         backgroundColor,
-        pathColors:
-          allFrameColors.length > 0 ? allFrameColors[0] : baseColors,
+        pathColors: baseColors,
         simultaneous: false,
         svgType: "strokes",
         readEvery,
-        mixMode: "readpixels",
+        mixMode: "gpu",
         mixStrength,
         maxBristles,
         chainJoints,
         pointStep,
+        frameCount: allFramePaths.length,
       },
     });
   }, [
